@@ -11,11 +11,11 @@ import com.mohiva.play.silhouette.impl.providers.CredentialsProvider
 import models.repository.CustomerRepository
 import models.{User, WSCustomerData}
 import play.api.libs.json.{Json, OFormat}
+import play.api.mvc.Cookie.SameSite
 import play.api.mvc._
 import play.filters.csrf.CSRF.Token
 import play.filters.csrf.{CSRF, CSRFAddToken}
 
-import java.sql.Date
 import javax.inject.{Inject, Singleton}
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -42,53 +42,27 @@ class AuthController @Inject()(scc: DefaultSilhouetteControllerComponents, addTo
       userRepository.retrieve(loginInfo).flatMap {
         case Some(user) =>
           authenticateUser(user)
-            .map(_.withCookies(Cookie(name, value, httpOnly = false)).withHeaders(("Access-Control-Allow-Credentials", "true")))
+            .map(_.withCookies(Cookie(name, value, httpOnly = false)).withHeaders(("Access-Control-Allow-Credentials", "true"),
+              ("Access-Control-Allow-Origin", "https://ebiznes-clientside.azurewebsites.net"),
+              ("Access-Control-Expose-Headers", "csrftoken"), ("csrftoken", value)))
         case None => Future.failed(new IdentityNotFoundException("Couldn't find user"))
       }
     }.recover {
       case _: ProviderException =>
         Forbidden("Wrong credentials")
-          .discardingCookies(DiscardingCookie(name = "PLAY_SESSION"))
+          .withCookies(Cookie("PLAY_SESSION", "", Some(Cookie.DiscardedMaxAge), "/", Option.apply(""), true, false, Option.apply(SameSite.None)))
     }
   })
 
   def signOut: Action[AnyContent] = securedAction.async { implicit request: SecuredRequest[EnvType, AnyContent] =>
     authenticatorService.discard(request.authenticator, Ok("Logged out"))
-      .map(_.discardingCookies(
-        DiscardingCookie(name = "csrfToken"),
-        DiscardingCookie(name = "PLAY_SESSION"),
-        DiscardingCookie(name = "OAuth2State")
+      .map(_.withCookies(
+        Cookie("csrfToken", "", Some(Cookie.DiscardedMaxAge), "/", Option.apply(""), true, false, Option.apply(SameSite.None)),
+        Cookie("PLAY_SESSION", "", Some(Cookie.DiscardedMaxAge), "/", Option.apply(""), true, false, Option.apply(SameSite.None)),
+        Cookie("OAuth2State", "", Some(Cookie.DiscardedMaxAge), "/", Option.apply(""), true, false, Option.apply(SameSite.None)),
+        Cookie("authenticator", "", Some(Cookie.DiscardedMaxAge), "/", Option.apply(""), true, false, Option.apply(SameSite.None))
       ))
   }
-
-  //
-  //  def signUp: Action[AnyContent] = unsecuredAction.async { implicit request: Request[AnyContent] =>
-  //    val json = request.body.asJson.get
-  //    val signUpRequest = json.as[SignUpRequest]
-  //    val loginInfo = LoginInfo(CredentialsProvider.ID, signUpRequest.email)
-  //
-  //    userRepository.retrieve(loginInfo).flatMap {
-  //      case Some(_) =>
-  //        Future.successful(Forbidden("User already exists"))
-  //      case None =>
-  //        val authInfo = passwordHasherRegistry.current.hash(signUpRequest.password)
-  //        userRepository.create(
-  //          CredentialsProvider.ID,
-  //          signUpRequest.email,
-  //          signUpRequest.email
-  //        ).flatMap { user =>
-  //          authInfoRepository.add(loginInfo, authInfo)
-  //            .map(_ => user)
-  //        }.flatMap { user =>
-  //          authTokenRepository.create(user.id)
-  //            .map(_ => user)
-  //        }.map { user =>
-  //          Json.toJson(user)
-  //        }.map { json =>
-  //          Created(json)
-  //        }
-  //    }
-  //  }
 
   def signUp: Action[AnyContent] = unsecuredAction.async { implicit request: Request[AnyContent] =>
     val json = request.body.asJson.get
